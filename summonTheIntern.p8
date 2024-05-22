@@ -21,9 +21,10 @@ function _init()
 		w = 8,
 		dx = 0,
 		dy = 0,
-		acc = 1,
-		fric = .1,
-		max_d = 1.5,
+		acc = 0.8,
+		stop_fric = .1,
+		fast_fric = 0.7,
+		max_d = 1.5, -- can still go beyond with acc
 		flipx = true,
 		running = false,
 		
@@ -31,24 +32,39 @@ function _init()
 		
 		anim_acc = 0,
 	 anim_delay = 6,
-	 anim_run_delay = 2,
+	 anim_run_delay = 3,
 	 anim_frame = 0,
 	 
 	 idle_frames = {1, 2, 3},
 	 run_frames = {4, 5, 6, 7},
 	}
+	
+	neutral_quotes = {
+		"...",
+		"come here",
+		"intern, please",
+	}
+	negative_quotes = {
+		"faster, boy",
+		"will it be today?",
+		"hurry up!",
+		"stop taking breaks",
+	}
 
 	summoners = find_flags(1)
 	for i, s in ipairs(summoners) do
-		s.anim_acc = 0
-	 s.anim_delay = 3
-	 s.anim_frame = 0
-	 s.idle_frames = { s.sp }
+	 s.anim_delay = 20
+		s.anim_acc = flr(rnd(s.anim_delay))
+		s.anim_dial_delay = 2
+	 s.anim_frame = flr(rnd(2))
+	 s.idle_frames = { s.sp, s.sp + 1 }
+		s.dial_frames = { s.sp + 2, s.sp + 3}
 	 s.flipx = false
 	 s.stackx = -1
 	 s.stacky = -1
 	 s.x = s.tx * 8
 	 s.y = s.ty * 8
+	 s.dialog = nil
 		mset(s.tx, s.ty, 0)
 	end
 end
@@ -71,7 +87,12 @@ function _draw()
 	elseif mode == "start" then draw_start()
 	elseif mode == "end" then draw_end() end
 
---	print(player.running, 0, 0, 0)
+	print(player.running, 0, 0, 0)
+	
+	local speedsq = player.dx * player.dx + player.dy * player.dy
+	local speed = sqrt(speedsq)
+	print(speed)
+	
 --	for index, s in ipairs(summoners) do
 --	
 --		print("".. index .. " " .. s.stackx .. " " .. s.stacky)
@@ -101,51 +122,61 @@ function update_player()
 	if btn(⬇️) then ldy += 1 end 		
 
 	if ldx == 0 then
-		player.dx *= player.fric
+		player.dx *= player.stop_fric
  end
 	if ldy == 0 then
-		player.dy *= player.fric
+		player.dy *= player.stop_fric
 	end
 	
 	if ldx != 0 and ldy != 0 then
 		ldx *= sqrt_inv_2
 		ldy *= sqrt_inv_2
 	end
-
-	if ldx != 0 or ldy != 0 then
-	 player.running = true
-	else
-	 player.running = false
- end
 	
 	
 	player.dx += ldx * player.acc
 	player.dy += ldy * player.acc
-		
-	-- if btn(⬅️) then player.dx -= player.acc end
-	-- if btn(➡️) then player.dx += player.acc end
-	-- if btn(⬆️) then player.dy -= player.acc end
-	-- if btn(⬇️) then player.dy += player.acc end 		
- 
- if abs(player.dx) > player.max_d then
- 	if player.dx > 0 then
-  	player.dx = player.max_d
-  else
-   player.dx = player.max_d*-1
+		 
+ local speedsq = player.dx * player.dx + player.dy * player.dy
+ if speedsq > player.max_d * player.max_d then
+ 	local speed = sqrt(speedsq)
+ 	local news = speed * player.fast_fric
+ 	if news < player.max_d then
+ 		news = player.max_d
  	end
+ 	local ratio = news / speed
+ 	player.dx *= ratio
+ 	player.dy *= ratio
  end
- 
- if abs(player.dy) > player.max_d then
- 	if player.dy > 0 then
-  	player.dy = player.max_d
-  else
-   player.dy = player.max_d*-1
- 	end
+
+-- if abs(player.dx) > player.max_d then
+-- 	if player.dx > 0 then
+--  	player.dx = player.max_d
+--  else
+--   player.dx = player.max_d * -1
+-- 	end
+-- end
+-- 
+-- if abs(player.dy) > player.max_d then
+-- 	if player.dy > 0 then
+--  	player.dy = player.max_d
+--  else
+--   player.dy = player.max_d*-1
+-- 	end
+-- end
+
+ if abs(player.dx) < 0.05 then
+ 	player.dx = 0
  end
+ if abs(player.dy) < 0.05 then
+ 	player.dy = 0
+	end
  
  player.x += player.dx
  player.y += player.dy
  
+ player.running = player.dx != 0 or player.dy != 0
+
  -- check interactions
  if btn(🅾️) then
  	for i, s in ipairs(summoners) do
@@ -154,7 +185,7 @@ function update_player()
  		local distsq = distx * distx + disty * disty
  		if s.stackx >= 0
  			and distsq <= interact_distance_sq then
-				dointeract(s)
+				do_interact(s)
  		end
  	end
  end
@@ -241,11 +272,14 @@ function anim_player(obj)
  if obj.running then
  	frames = obj.run_frames
  	delay = obj.anim_run_delay
+ elseif obj.dialog != nil then
+ 	frames = obj.dial_frames
+ 	delay = obj.anim_dial_delay
  end
  
 	obj.anim_acc -= 1
  if obj.anim_acc <= 0 then --si anim_play atteint 0, reset compteur a rebour a anim_spd   
-  obj.anim_acc = obj.anim_delay
+  obj.anim_acc = delay
   obj.anim_frame += 1
  end
  
@@ -291,6 +325,10 @@ function shuffle(arr)
 		arr[len - i] = arr[r]
 		arr[r] = inter
 	end
+end
+function pick_rnd(arr)
+	local i = 1 + flr(rnd(count(arr)))
+	return arr[i]
 end
 -->8
 -- update main menu
@@ -340,9 +378,9 @@ function get_summonable()
 						local t = mget(s.tx + i, s.ty + j)
 						local deco = mget(s.tx + i + 16, s.ty + j)
 						if fget(t, 2) and deco <= 0 then
-							s.stackx = s.tx + i
-							s.stacky = s.ty + j
-							return s
+							local px = s.tx + i
+							local py = s.ty + j
+							return s, px, py
 						end
 					end
 				end
@@ -353,24 +391,50 @@ function get_summonable()
 end
 
 function update_summons()
+	for i, s in ipairs(summoners) do
+		if s.stackx >= 0 then
+			s.summon_time += 1
+		end
+	end
+
 	next_summon -= 1
 	if next_summon <= 0 then
 		next_summon = summon_delay
 		shuffle(summoners)
-		local s = get_summonable()
+		local s, px, py = get_summonable()
 		lastsummonable = s
 		if s != nil then
+			do_summon(s, px, py)
 			mset(s.stackx + 16, s.stacky, paper_sp)
 		end
 	end
 end
 
-function dointeract(s)
+function do_summon(s, stackx, stacky)
+	s.stackx = stackx
+	s.stacky = stacky
+	s.summon_time = 0
+	s.dialog = {
+		x = s.x,
+		y = s.y - 16,
+		txtcol = 0,
+		bgcol = 7,
+		txt = pick_rnd(neutral_quotes),
+		dur = 45,
+		curlen = 1,
+		lapse = 0,
+		csfx = flr(rnd(2)),
+	}
+end
+
+function do_interact(s)
 	player.carrying += 1
 	mset(s.stackx + 16, s.stacky, 0)
 	s.stackx = -1
 	s.stacky = -1
+	s.dialog = nil
 end
+
 
 -->8
 -- update end menu
@@ -403,15 +467,71 @@ function draw_game()
 	end
 
 	draw_entity(player)
+	
+	for i, s in ipairs(summoners) do
+		if s.dialog != nil then
+			draw_dialog(s.dialog)
+			local dur = s.dialog.dur
+			if s.dialog.lapse > dur then
+				s.dialog = nil
+			end
+		end
+	end
 end
 
 function draw_entity(obj)
 		spr(obj.sp, obj.x, obj.y, 1, 1, obj.flipx)
 		if obj.carrying != nil and obj.carrying > 0 then
-			for i = 0, obj.carrying do
-				spr(paper_sp, obj.x + 3, obj.y + 2 - i * 3)
+			local offx = 6
+			if obj.flipx then
+				offx = -2
 			end
+			rectfill(obj.x + offx,
+					obj.y + 4 - obj.carrying + 1,
+					obj.x + offx + 3,
+					obj.y + 4,
+					6
+			)
+			rectfill(obj.x + offx,
+					obj.y + 4 - obj.carrying - 2,
+					obj.x + offx + 3,
+					obj.y + 4 - obj.carrying,
+					7
+			)
 		end
+end
+
+function draw_dialog(d)
+	local len = #d.txt
+	local twidth = print(d.txt, 0, -100)
+	local theight = 5
+	pal(7, d.bgcol)
+	
+	
+	rectfill(d.x + 3,
+			d.y - 5,
+			d.x + twidth,
+			d.y + theight + 3,
+			7
+		)
+	spr(48, d.x - 2, d.y - 5)
+	spr(49, d.x + twidth, d.y - 5)
+	spr(50, d.x - 2, d.y + theight - 4)
+	spr(51, d.x + twidth, d.y + theight - 4)
+
+	if d.curlen <	len then
+		d.curlen += 1
+		sfx(d.csfx)
+	else
+		d.lapse += 1
+	end
+
+	for i = 1, d.curlen do
+		print(d.txt[i], d.x + i * 4, d.y, d.txtcol)
+	end
+ --	print(d.txt, d.x, d.y, d.txtcol)
+	-- print(d.txt, 0, 0)
+	pal(0)
 end
 -->8
 -- draw end menu
@@ -421,13 +541,13 @@ function draw_end()
 
 end
 __gfx__
-00000000000999000009990000000000000999000000000000099900000000000000999000000000000000000000000000000000000000000000000000000000
-000000000009fc000009fc00000999000009fc00000999000009fc000009990000009fc00000999000009990000000000aaaaaaaaaaaaaaaaaaaaaa000000000
-00700700000fff00000fff000009fc00000fff000009fc00000fff000009fc000010fff000109fc000009fc0000000009d55555555555555555555d900000000
-000770000004880000048800000fff0000088400000fff0000448800000fff00001184800011fff00011ff4f0000000095555555555555555555555900000000
-000770000004f8000004880000048800000884f00008480000f88800000848000001884f0001844f000184800000000095555555555555555555555900000000
-00700700000888000004f8000004f8000008880000084f000008880000084f00000111660001116600011166000000009d55555555555555555555d900000000
-00000000000605000008880000088800006605000006600000550600000560000000010600000106000001060000000009999999999999999999999000000000
+0000000000099900000999000000000000099900000000000009990000000000000099900000000000000000000000000d555555555555d00000000000000000
+000000000009fc000009fc00000999000009fc00000999000009fc000009990000009fc0000099900000999000000000d51111111111115d0000000000000000
+00700700000fff00000fff000009fc00000fff000009fc00000fff000009fc000010fff000109fc000009fc0000000000d555555555555d00000000000000000
+000770000004880000048800000fff0000088400000fff0000448800000fff00001184800011fff00011ff4f0000000000000000000000000000000000000000
+000770000004f8000004880000048800000884f00008480000f88800000848000001884f0001844f000184800000000000000000000000000000000000000000
+00700700000888000004f8000004f8000008880000084f000008880000084f000001116600011166000111660000000000000000000000000000000000000000
+00000000000605000008880000088800006605000006600000550600000560000000010600000106000001060000000000000000000000000000000000000000
 00000000000605000006050000060500000005000000500000000600000060000000101000001010000010100000000000000000000000000000000000000000
 00000000000099900000000000000000000099900555000000000000000000000555000000000000000000000000000009090000090900000909000009090000
 000000000000ff3000009990000099900000ff300145500005550000055500000145500000000000000000000000000009990000099900000999000009990000
@@ -445,14 +565,14 @@ __gfx__
 01110000000fff00000cfc00000fff00000311300055500000555000001110000055500000000000000000000000000000000000000000000000000000000000
 0010000000031300000fff0000031100000311000001000000010000005550000001000000000000000000000000000000000000000000000000000000000000
 01010000000f1f00000f1f00000f11f0000f11000010100000101000001010000010100000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000700000000000000700000000000000000000000000000000000000000000000000000001110000000000
-00000000000000000000000000000000000000000000700000000000000700000777777000000000000000000000000000000000000000000111555000011100
-00000000000000000000000000000000000000000007700007777770000770000777777000000000000000000000000000000000000000000555665001115550
-00000000000000000000000000000000000000000006700007111170000760000776677000000000000000000000000000000000000000000555555005556650
-00000000000000000000000000000000000000000076700007111170000767000776677000000000000000000000000000000000000000005555555005555550
-00000000000000000000000000000000000000000076000007777770000067000066160000000000000000000000000000000000000000005555555055555550
-00000000000000000000000000000000000000000000000000666600000000000000100000000000000000000000000000000000000000000060060055555550
-00000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000060060000600600
+00000111111000001777777777777771000000000000700000000000000700000000000000000000000000000000000000000000000000000001110000000000
+00011777777110001777777777777771000000000000700000000000000700000777777000000000000000000000000000000000000000000111555000011100
+00177777777771001777777777777771000000000007700007777770000770000777777000000000007777000000000000000000000000000555665001115550
+01777777777777100177777777777710000000000006700007111170000760000776677000000000007777000000000000000000000000000555555005556650
+01777777777777100177777777777710000000000076700007111170000767000776677000000000007777000000000000000000000000005555555005555550
+17777777777777710017777777777100000000000076000007777770000067000066160000000000006666000000000000000000000000005555555055555550
+17777777777777710001177777711000000000000000000000666600000000000000100000000000000000000000000000000000000000000060060055555550
+17777777777777710000011111100000000000000000000000000000000000000000100000000000000000000000000000000000000000000060060000600600
 444444444444444401000000000000100000000000000000000000000000000000000000899999aa99999999aaaaaaa866666666766666666666666666666667
 4444444444444444010000000000001000000000667770000066777700000000000000009944444444444444444444aa77777777767777777777777777777767
 444444444dddddd400000000000000000000000055777100001677770000000000000000a4411111111111111111144a77cccc77766777777777777777777667
