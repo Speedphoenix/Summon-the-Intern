@@ -2,7 +2,7 @@ pico-8 cartridge // http://www.pico-8.com
 version 42
 __lua__
 function _init()
-	debug = true
+	debug = false
 
 	cur_mapx = 0
 	cur_mapy = 0
@@ -17,9 +17,11 @@ function _init()
 	
 	curshake = 0.
 	
-	leave_dayratio = 0.9
+	leave_dayratio = 0.85
 	day_duration = 1800
 	day_count = 0
+	
+	leave_interval = 20
 	
 	-- time before the ❎ anim pops up
 	endmenu_pause = 30
@@ -34,7 +36,7 @@ function _init()
 	max_brnt = 100
 	
 	if debug then
-		burnout = max_brnt - 10
+		burnout = max_brnt + 10
 	end
 	
 	paper_load = {59, 60, 61, 62, 63}
@@ -60,6 +62,17 @@ function _init()
 		"hmpf, what good are you?",
 		--                             < limit
 	}
+	tuto_quotes = {
+		"oh, they're replacing me",
+		"welcome, i guess",
+		-- "here, you will need to complete tasks",
+		"when someone summons you",
+		"take their document with 🅾️/c",
+		"get the document to your desk",
+		"hold 🅾️/c to resolve it",
+		"good, you are ready",
+		"remember you can dash with ❎",
+	}	
 	
 	animables = {}
 end
@@ -69,20 +82,43 @@ end
 function _update()
 	frames += 1
 
-	if mode =="game" then update_game()
-	elseif mode == "start" then update_start()
-	elseif mode == "end" then update_end() end
+	if mode == "game" then
+		update_game()
+	elseif mode == "tuto" then
+		update_tuto()
+	elseif mode == "start" then
+		update_start()
+	elseif mode == "end" then
+		update_end()
+	end
 	prevbtno = btn(🅾️)
 	prevbtnx = btn(❎)
 end
 
-function pow(a, b)
+function pow(a, b, c)
 	local ret = 1
 	for i=1, b do
-		ret *= a
+		if c != nil and i <= 3 then
+			ret *= a
+		else
+			ret *= c
+		end
 	end
 	return ret
 end
+
+function make_difficulties(prevday)
+	summ_ratio = pow(0.8, prevday, 0.9)
+	summ_var_ratio = pow(0.85, prevday, 0.92)
+	pat_ratio = 1
+	pat_var_ratio = 1
+	cutoff = 0
+	if prevday > cutoff then
+		pat_ratio = pow(0.86, prevday - cutoff, 0.96)
+		pat_var_ratio = pow(0.90, prevday - cutoff, 0.92)
+	end
+end
+
 
 function _draw()
 	
@@ -112,12 +148,33 @@ function _draw()
 		curshake = 0
 	end
 
-	if mode =="game" then draw_game()
-	elseif mode == "start" then draw_start()
-	elseif mode == "end" then draw_end() end
-
-	if player != nil then
---		print(player.running, 0, 0, 0)
+	if mode == "game" or mode == "tuto" then
+		draw_game()
+	elseif mode == "start" then
+		draw_start()
+	elseif mode == "end" then
+		draw_end()
+	end
+	
+	
+	if debug then
+		pal(-1)
+		music(-1)
+		cls(0)
+		print("day\tsumm\t\t\tpat", 0, 0, 6)
+		for i=0, 18 do
+			make_difficulties(i)
+	
+			local tab = "\t"
+			if i < 2 then
+				tab = tab .. "\t"
+			end
+			print(""..(i+1).."\t"..summ_ratio..tab..summ_var_ratio.."\t"..pat_ratio..tab..pat_var_ratio)
+		end	
+	
+		if player != nil then
+	--		print(player.running, 0, 0, 0)
+		end
 	end
 end
 
@@ -254,6 +311,9 @@ function update_player()
 					player.work_prog = 0
 					player.home_stack -= 1
 					player.completed_tasks += 1
+					if mode == "tuto" then
+						next_tuto()
+					end
 				end
 			end
  	end
@@ -333,10 +393,10 @@ function collide_map(obj,aim,flag)
  --pixel to tiles
  x1=x1/8  x2/=8  y1/=8  y2/=8
 
- local a= fget(mget(x1,y1), flag)
- local b= fget(mget(x1,y2), flag)
- local c= fget(mget(x2,y1), flag)
- local d= fget(mget(x2,y2), flag)
+ local a= fget(mget(x1 + cur_mapx,y1 +cur_mapy), flag)
+ local b= fget(mget(x1 + cur_mapx,y2 +cur_mapy), flag)
+ local c= fget(mget(x2 + cur_mapx,y1 +cur_mapy), flag)
+ local d= fget(mget(x2 + cur_mapx,y2 +cur_mapy), flag)
 
  if a or b or c or d then
   is_collide=true
@@ -362,7 +422,7 @@ function update_sfx(obj)
 	local id
 	if obj.working then
 		delay = obj.work_sfx_delay
-		if mode == "game" then
+		if mode == "game" or mode == "tuto" then
 			id = 6
 		else
 			id = 12
@@ -452,8 +512,8 @@ function find_flags(f, ox, oy)
 		oy = cur_mapy
 	end
 	local ret = {}
-	for i = 0, 16 do
-		for j = 0, 16 do
+	for j = 0, 16 do
+		for i = 0, 16 do
 			local t = mget(ox + i, oy + j)
 			if fget(t, f) then
 				add(ret, {
@@ -504,19 +564,42 @@ function update_game()
  if day_time >= day_duration then
 		mode = "end"
 		startend()
-	elseif day_time >= leave_dayratio * day_duration then
-		
+	elseif day_ending() then
+		if next_leave <= 0 then
+			for i, s in ipairs(summoners) do
+				if not s.gone and s.stackx < 0 then
+					leave_s(s)
+					next_leave = leave_interval
+					break;
+				end
+			end
+		end
+		next_leave -= 1
  end
- 
-  
 end
 
+function leave_s(s)
+	s.gone = true
+	mset(cur_mapx + s.tx, cur_mapy + s.ty, 0)
+end
+
+function day_ending()
+	return day_time >= leave_dayratio * day_duration
+end
 
 function startgame()
 	cur_mapx = 0
 	cur_mapy = 0
+	if mode == "tuto" then
+		cur_mapx = 80
+		cur_mapy = 0
+		music(20, 500, 7)
+	elseif started_once then
+		music(1, 500, 7)
+	else
+		music(1, 0, 7)
+	end
 	pal()
-	music(1, 500, 7)
 	reset_map()
 	work_duration = 45
 	
@@ -525,12 +608,20 @@ function startgame()
 	starty *= 8
 	local homex, homey = find_tile(96)
 
+	dialogs = {}
 	day_time = 0
-	day_count += 1
+	started_once = true
+	tuto_state = 0
+	if mode != "tuto" then
+		day_count += 1
+	else
+		next_tuto()
+	end
 	
 	angered_count = 0
 	missed_count = 0
 	petted_count = 0
+	next_leave = 0
 
 	player = {
 		sp = 1,
@@ -556,6 +647,8 @@ function startgame()
 		flipx = true,
 		running = false,
 		working = false,
+		inter_sp = 0,
+		inter_acc = 0,
 		
 		carrying = 0,
 		home_stack = 0,
@@ -584,6 +677,10 @@ function startgame()
 	 stacky = -1,
 	}
 	
+	
+--	if mode == "tuto" then
+--		mset(10, 6, 81)
+--	end
 	summoners = find_flags(1, cur_mapx, cur_mapy)
 	for i, s in ipairs(summoners) do
 	 s.anim_delay = 40
@@ -604,7 +701,11 @@ function startgame()
 	 s.patience = 0
 	 s.max_pat = 0
 	 s.type = 0
+	 s.gone = false
 		mset(cur_mapx + s.tx, cur_mapy + s.ty, 97)
+--		if mode == "tuto" and i != 6 then
+--			leave_s(s)
+--		end
 	end
 	
 	fill_animables(cur_mapx + 16, cur_mapy)
@@ -620,18 +721,16 @@ function startgame()
 	day_end_brnt = -1 * brnt_per_overtime
 	brnt_per_cat = -3
 
-	local increases = day_count - 1
-	diff_ratio = pow(0.8, increases)
-	diff_var_ratio = pow(0.85, increases)
+	make_difficulties(day_count - 1)
 	
-	summon_delay = 150 * diff_ratio
-	summon_variable = 30 * diff_var_ratio
+	summon_delay = 150 * summ_ratio
+	summon_variable = 30 * summ_var_ratio
 	next_summon = summon_variable * 2
 	
-	patience_shout = 270 * diff_ratio
-	patience_miss = 370 * diff_ratio
+	patience_shout = 270 * pat_ratio
+	patience_miss = 370 * pat_ratio
 	-- rnd added to previous vars
-	patience_variable = 60 * diff_var_ratio
+	patience_variable = 60 * pat_var_ratio
 	
 	if summon_variable < 10 then summon_variable = 10 end
 	if patience_variable < 10 then patience_variable = 10 end
@@ -673,8 +772,8 @@ function get_summonable()
 				for j = -1, 1 do
 					if i == 0 and j == 0 then
 					else
-						local t = mget(s.tx + i, s.ty + j)
-						local deco = mget(s.tx + i + 16, s.ty + j)
+						local t = mget(s.tx + i + cur_mapx, s.ty + j + cur_mapy)
+						local deco = mget(s.tx + i + 16 + cur_mapx, s.ty + j + cur_mapy)
 						if fget(t, 2) and deco <= 0 then
 							local px = s.tx + i
 							local py = s.ty + j
@@ -699,19 +798,27 @@ function update_summons()
 			end
 		end
 	end
+	
+	if day_ending() then
+		return
+	end
 
 	next_summon -= 1
 	if next_summon <= 0 then
 		local var_sum = flr(rnd(summon_variable))
 		next_summon = summon_delay + var_sum
 		shuffle(summoners)
-		local s, px, py = get_summonable()
-		lastsummonable = s
-		if s != nil then
-			bump_summon(s, px, py)
-			mset(cur_mapx + s.stackx + 16, cur_mapy + s.stacky, paper_sp)
-			s.type = 1
-		end
+		summon_any()
+	end
+end
+
+function summon_any()
+	local s, px, py = get_summonable()
+	lastsummonable = s
+	if s != nil then
+		bump_summon(s, px, py)
+		mset(cur_mapx + s.stackx + 16, cur_mapy + s.stacky, paper_sp)
+		s.type = 1
 	end
 end
 
@@ -749,7 +856,7 @@ function bump_summon(s, stackx, stacky)
 		txtcol = txtcol,
 		bgcol = bgcol,
 		txt = pick_rnd(quotes),
-		dur = 45,
+		dur = 25,
 		curlen = 1,
 		lapse = 0,
 		csfx = s.type,
@@ -780,6 +887,9 @@ function do_interact(s)
 	s.patience = 0
 	s.type = 0
 	sfx(10)
+	if mode == "tuto" then
+		next_tuto()
+	end
 --	s.anim_acc = 0
 end
 
@@ -816,9 +926,13 @@ function update_start()
  t += 1
  blinkt = blinkt + 1
 
- if btnp(❎) or btnp(🅾️) then 
-  startgame()  
-  mode = "game"
+ if btnp(❎) or btnp(🅾️) then
+ 	if started_once then
+	  mode = "game"
+	 else
+	 	mode = "tuto"
+	 end
+  startgame() 
  end
  
 end
@@ -831,26 +945,19 @@ function startstart()
 end
 
 function draw_start()
-
 	pal(0, 133, 1)
 	cls(0)
 	rectfill(0,110,128,128,5)
 	map(32,0)
-	
 
 	print("❎/x dash    🅾️/c interact",13,96,4)
 	print("❎/x dash    🅾️/c interact",13,95,9)
-	
+
 	print("press ❎ or 🅾️",35,38,blink())
 	print("ludum dare 55 by",32,112,13)
 	print("speedphoenix & kiuun",25,120,13)
 	print("ludum dare 55 by",32,111,6)
 	print("speedphoenix & kiuun",25,119,6)
-	
-
-
-
-
 end
 
 function blink()
@@ -870,16 +977,29 @@ end
 function draw_game()
 
 	cls(13)
+	local t = day_time / day_duration
+
+	local day_col = 12
+	if t > leave_dayratio then
+		day_col = 1
+	elseif t > 0.6 then
+		day_col = 2
+	end
+	
+	rectfill(0, 0, 128, 23, day_col)
 	map(cur_mapx, cur_mapy)
 	map(cur_mapx + 16, cur_mapy)
 	
-	local t = day_time / day_duration
-	draw_clock(0, 0, t, 4.5, 1, 2)
-	draw_calendar(20, 0, day_count)
-	draw_brnt(60, 4)
+	if mode != "tuto" then
+		draw_clock(0, 0, t, 4.5, 1, 2)
+		draw_calendar(20, 0, day_count)
+		draw_brnt(60, 4)
+	end
 
 	for i, s in ipairs(summoners) do
-		draw_entity(s)
+		if not s.gone then
+			draw_entity(s)
+		end
 	end
 	
  for i, a in ipairs(animables) do
@@ -896,6 +1016,14 @@ function draw_game()
 				s.dialog = nil
 			end
 		end
+	end
+	if mode == "tuto" then
+		for i, d in ipairs(dialogs) do
+			draw_dialog(d)
+		end
+		
+		print("❎+🅾️ skip", 44, 110, 6)
+		print("   ❎ ok")
 	end
 end
 
@@ -947,7 +1075,7 @@ function draw_calendar(x, y, d, h)
 		local twidth = print(d, 0, -100)
 		local tx = x + 9 - twidth / 2
 		local ty = y + h / 2 - 2
-		print(d, tx, ty)
+		print(d, tx, ty, 0)
 	end
 end
 
@@ -993,6 +1121,19 @@ function draw_entity(obj)
 	 if stack > 0 then
 			draw_paper(obj.homex * 8 + 2, obj.homey * 8 + 4, stack)
 		end
+	end
+	if obj.home_stack != nil
+			and (
+				obj.home_stack > 0
+				or obj.carrying > 0
+			) and not obj.working
+		then
+		spr(185 + obj.inter_sp, obj.startx, obj.starty)
+	 obj.inter_acc += 1
+	 if obj.inter_acc > 20 then
+	 	obj.inter_sp = (obj.inter_sp + 1) % 2
+	 	obj.inter_acc = 0
+	 end
 	end
 end
 
@@ -1043,8 +1184,13 @@ function draw_dialog(d)
 		d.lapse += 1
 	end
 
+	local a = 0
 	for i = 1, d.curlen do
-		print(d.txt[i], x + i * 4, d.y, d.txtcol)
+		local c = d.txt[i]
+		print(c, x + (i + a) * 4, d.y, d.txtcol)
+		if c == "❎" or c == "🅾️" then
+			a += 1
+		end
 	end
  --	print(d.txt, x, d.y, d.txtcol)
 	-- print(d.txt, 0, 0)
@@ -1057,6 +1203,9 @@ end
 function update_end()
 	endf += 1
 	
+	if burnout < 0 then
+		burnout = 0
+	end
 	local final_brnt = burnout
 	final_brnt += player.home_stack * brnt_per_overtime
 	
@@ -1119,7 +1268,7 @@ function update_end()
 			player.home_stack -= 1
 			burnout += brnt_per_overtime
 			if player.home_stack <= 0 and game_over then
-				sfx(13)
+				do_game_over()
 			end
 		end
 	else
@@ -1141,7 +1290,8 @@ end
 
 function startend()
 	reset_map()
-	music(-1, 1000)
+	music(-1, 0)
+	sfx(9)
 	
 	game_over = false
 	added_btn = false
@@ -1201,6 +1351,12 @@ function startend()
 	burnout += day_end_brnt
 end
 
+function do_game_over()
+	end_cat.x = 81
+	end_cat.y = 41
+	sfx(13)
+end
+
 -->8
 -- draw end menu
 
@@ -1224,9 +1380,9 @@ function draw_end()
 	draw_clock(20, 13, t, 4.5, 1, 2)
 	
 	if game_over then
-		draw_calendar(90, 12, day_count, 16)
+		draw_calendar(90, 12, day_count, 15)
 	else
-		draw_calendar(90, 12, day_count + 1, 16)
+		draw_calendar(90, 12, day_count + 1, 15)
 		local calh = 15 - ended_work_f
 		if calh > 0 then
 			draw_calendar(90, 13, day_count, calh)
@@ -1259,9 +1415,90 @@ function draw_end()
 end
 
 function draw_gameover()
-	rectfill(38, 60, 88, 80, 1)
-	print("game over", 45, 65, 8)
+	end_cat.x = 81
+	end_cat.y = 41
+
+	rectfill(16,10,111,111,14)
+	map(cur_mapx + 16, cur_mapy)
+
+	print("game over", 45, 70, 8)
+	for i, a in ipairs(animables) do
+ 	draw_entity(a)
+ end
+	draw_calendar(90, 12, day_count, 15)
 end
+
+-->8
+-- tuto
+
+function update_tuto()
+ update_player()
+-- update_summons()
+ anim_player(player)
+ update_sfx(player)
+ for i, s in ipairs(summoners) do
+ 	anim_player(s)
+ end
+ for i, a in ipairs(animables) do
+ 	anim_player(a)
+ end
+
+	-- allow skipping
+ if btnp(❎) and btnp(🅾️) then
+ 	mode = "game"
+ 	startgame()
+ end
+ 
+ if tuto_state != 3 and tuto_state != 5 then
+	 if btnp(❎) and not prevbtnx then
+	 	next_tuto()
+	 end
+ end
+ 
+end
+
+function next_tuto()
+	tuto_state += 1
+	if tuto_state == 4
+		or tuto_state == 6
+		or tuto_state == 8 then
+		tuto_state += 1
+	end
+	if tuto_state > count(tuto_quotes) then
+		mode = "game"
+ 	startgame()
+		return
+	end
+	
+	dialogs = {
+		make_dialog(tuto_state, 8, 8),
+	}
+	if tuto_state == 3
+		or tuto_state == 5
+		or tuto_state == 7 then
+		add(dialogs, make_dialog(tuto_state + 1, 8, 23))
+	end
+	
+	if tuto_state == 3 then
+		shuffle(summoners)
+		summon_any()
+	end
+end
+
+function make_dialog(idx, x, y)
+	return {
+		x = x,
+		y = y,
+		txtcol = 0,
+		bgcol = 7,
+		txt = tuto_quotes[idx],
+		dur = -1,
+		curlen = 1,
+		lapse = 0,
+		csfx = 0,
+	}
+end
+
 
 __gfx__
 0000000000099900000999000000000000099900000000000009990000000000000099900000000000000000000aaaa00d555555555555d00000000088000088
@@ -1352,13 +1589,13 @@ a4111111111111111111114a00000060f00000000777777777777777000000000000000094000000
 000000fffffeefff00001ffff0006666660000000000000000000000000004904949499900049494949949994900494900000008888888888800666666667777
 0000000ffffeeff0d111fffff00000000000000000000000000000000000040040404440000404040440444040004040000000088888888888fffff666667777
 000001111fffff11d11fffff00000000000000000000000000000000000000000000000000000000000000000000000000000008888222888ffffff666667ff7
-00001dd11111111dd11ffff10000077d777000000000000000007700000000005555555500000000000000000000000000000000882288888ffffff66666fff0
-001111ddd1ddddd1d111ff00000077d77d7770000000000000077777770000005555555500000000000000000000000000000000882888888ffffff66666fff0
-00ddd11111111111ddd1100000077d77d777d7700000000077777d777d7777775555555500000000000000000000000000000000088888888ffff8444fffff00
+00001dd11111111dd11ffff10000077d777000000000000000007700000000005555555500000000880000880000000000000000882288888ffffff66666fff0
+001111ddd1ddddd1d111ff00000077d77d7770000000000000077777770000005555555508800880800000080000000000000000882888888ffffff66666fff0
+00ddd11111111111ddd1100000077d77d777d7700000000077777d777d7777775555555508000080000000000000000000000000088888888ffff8444fffff00
 0111dd111111111d1110000000667777777d777700000000777d7777d777d7705555555500000000000000000000000000ff0000008888822888884444000000
-0111d1fffdddddd1000000000666000777d77770000000007777777d7777d7705555555500000000000000000000000000000000002222228888884400000000
-011d1ffffff1111100000000000000007777700000000000007777d7777d77705555555500000000000000000000000000000000000222288888888000000000
-001d1ffffff11111000000000000000007770000000000000000777777d777005555555500000000000000000000000000f00000000222080808080000000000
+0111d1fffdddddd1000000000666000777d77770000000007777777d7777d7705555555508000080000000000000000000000000002222228888884400000000
+011d1ffffff1111100000000000000007777700000000000007777d7777d77705555555508800880800000080000000000000000000222288888888000000000
+001d1ffffff11111000000000000000007770000000000000000777777d777005555555500000000880000880000000000f00000000222080808080000000000
 44411fffff4444444444444444444444007000000000000000000077777770005555555500000000000000000000000000000000000080808080808000000000
 00000007000000070000000000000000555555555550000009990000000000000000000009990000000000000000000000000000000000000000000000000000
 55555575555550700000000000000000566667666650000003f90000099900000999000003f90000000000000000000000000000000000000000000000000000
@@ -1392,26 +1629,156 @@ a4111111111111111111114a00000060f00000000777777777777777000000000000000094000000
 00000000000000000000550550000000000000000000000000555000005550000055500000555000000000000000000000000000000000000000000000000000
 00000000000000000000dd0dd0000000000000000000000000010000000100000001000000010000000000000000000000000000000000000000000000000000
 00000000000000000000440444000000000000000000000000101000001010000010100000101000000000000000000000000000000000000000000000000000
+__label__
+999999aa9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999aaaaaaaa
+994444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444aa
+a44llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll44a
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll4a
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllll99aaallllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllll49444allllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllll499ll49llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllll49lll49llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllll49lll4lllllllllalllllllalllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllll4999aallalllallallllll4allllllllllllllallllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllll44444al49ll9a49aaaaaal4aaaaaaallaaall4aaaalllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllll4949ll4944944a44al4944a44al9444a49444alllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllll49lll4949ll4944944944a499l49l4949ll4949ll4alllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllll49ll49949ll4949949949949l49949949ll4949ll9llllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllll49l499l49l99949l49l49l49l49l49l49ll4949l49llllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllll494994l49994l49l49l49l49l49l49l49l49l49l49llllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllll49994ll444lll49l4ll49l49l4ll49l4499ll49l49llllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllll444llllllllll4lllll4ll4lllll4lll44lll4ll4lllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllllaaalallllllllllalllll9lllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllll449l4alllllllll4lllll49allllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllll49l4aaalaaallll9laaa49llaaalaaalaaallllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllll49l4949494alll49494a49l499a494l494allllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllll49l494949lllll49494949l494l49ll4949llllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllll49l49494999lll494949499499949ll4949llllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllll4ll4l4l444llll4l4l4l44l444l4lll4l4lllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllll666l666l666ll66ll66llllll66666lllllll66l666llllll66666lllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllll6l6l6l6l6lll6lll6lllllll66l6l66lllll6l6l6l6lllll66lll66llllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllll666l66ll66ll666l666lllll666l666lllll6l6l66llllll66l6l66llllllllllllllll76llllllllllllllllll49
+94lllllllllllllllllllllllllllllllll6lll6l6l6lllll6lll6lllll66l6l66lllll6l6l6l6lllll66lll66llllllllllllllll76llllllllllllllllll49
+94lllllllllllllllllllllllllllllllll6lll6l6l666l66ll66lllllll66666llllll66ll6l6llllll66666llllllllllllllll7d66lllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll7666lllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll77666lllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll776666lllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll77d7766lllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll7777d776lllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllll76llllllllllllllllllllllllllllllllllllllllllllllllllllllllll777777llllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllll76lllllllllllllllllllllllllllllllllllllllllllllllllllllllllll7777lllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllll7d66lllllllllllllllllllllllllllllllllllllllllllllllllllllllllll77llllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllllllll7666llllllllllllllllllllllllllllllllllllllllllllllllllllllllllll7llllllllllllllllllll49
+94lllllllllllllllllll7llllll7lllllllllll77666lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllll7lllll77llllllllll776666lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllll7lllllllllll77d7766lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllllllllll7777d776lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94lllllllllllllllllllllllllllll7llllll777777llllllllllllll76llllllllllllllll77llllllllllllllllllllllllllllllllllllllll76llllll49
+94llllllllllllllllllllllllllll77lllllll7777lllllllllllllll76lllllllllllllll7777777llllllllllllllllllllllllllllllllll7776llllll49
+94lllllllllllll8888lllllllllllllllllllll77lllllllllllllll7d66lllllllllll77777d777d777777llllllllllllllllllllllllll777666llllll49
+94llllllllllll88888888888llllllllllllllll7lllllllllllllll7666lllllllllll777d7777d777d77lllll7llllllllllllllllll777766666llllll49
+94lllllllllll8888888222222llllllllllllllllllllllllllllll77666lllllllllll7777777d7777d77lllll77llllllaallllllll766666666lllllll49
+94llllllllll88888222222222lllllllllllllllllllllllllllll776666lllllllllllll7777d7777d777lllllllllllll99a999ll7766dddddddlllllll49
+94llllllllll888882fffff22lllllllllllllllllllllllllllll77d7766lllllllllllllll777777d777llll77lllllaaa999a99ll7dddddddd77lllllll49
+94lllllllll88888fffffffflllllllllllllllllllllllllllll7777d776lllllllllllllllll7777777llllllllll9999999999ll6ddddddd77777llllll49
+94lllllllll8884ffffffffffllllllffffllllldd7777llllllll777777llllllllllllllllllllllllllllllllll9999fffffllll6666666777677llllll49
+94lllllllll2244f555ff555flllllffffflll777777dd7llllllll7777lllllllllllllllllllllllllllllllllll99ffff4ff4fll6666666666777llllll49
+94llllllllllf44f717ff717flllllfffffll66677dd7777llllllll77lllllllllllllllllllllllllllllllllll99fff44ffff4ll6666666677777llllll49
+94llllllllllf44ffffffffffllllllffffl666677777777lllllllll7llllllllllllllllllllllllllllllllll999fff77cff7clll666666677777llllll49
+94llllllllllfffffff77ffffllll1ffffll666677777777llllllllllllllllllllllllllllllllllllllllll9l999fff77cff7clll666666677777llllll49
+94llllllllllllfffffeefffllll1fffflll666666llllllllllllllllllllllllllllllllllllllllllllllll999f9fffffffffffll666666677777llllll49
+94lllllllllllllffffeeffld111fffffllllllllllllllllllllllllllllllllllllllllllllllllllllllllll99f9fffffffffffll666666666777llllll49
+94lllllllllll1111fffff11d11ffffflllllllllllllllllllllllllllllllllllllllllllllllllllllllllll99f9ffffff77effll666666667777llllll49
+94llllllllll1dd11111111dd11ffff1lllll77d777llllllllllllllllllllllllllllllllllllllllllllllll99ffffffff88fffll666666677777llllll49
+94llllllll1111ddd1ddddd1d111ffllllll77d77d777llllllllllllllllllllllllllllllllllllllllllllllllfffffffffffffll666666676777llllll49
+94llllllllddd11111111111ddd11llllll77d77d777d77lllllllllllllllllllllllllllllllllllllllllllllllffffffffffflll666666667777llllll49
+94lllllll111dd111111111d111lllllll667777777d7777llllllllllllllllllllllllllllllllllllllllllllllffffffffffllll666666667777llllll49
+94lllllll111d1fffdddddd1lllllllll666lll777d7777lllllllllllllllllllllllllllllllllllllllllllllllll44444lllllll666666667777llllll49
+94lllllll11d1ffffff11111llllllllllllllll77777llllllllllllllllllllllllllllllllllllllllllllllllll88888888888ll666666667777llllll49
+94llllllll1d1ffffff11111lllllllllllllllll777lllllllllllllllllllllllllllllllllllllllllllllllllll88888888888fffff666667777llllll49
+94llllll44411fffff4444444444444444444444ll7llllllllllllllllllllllllllllllllllllllllllllllllllll8888222888ffffff666667ff7llllll49
+94llllll444444444444444444444444444444444lllllllllllllllllllllllllll77llllllllllllllllllllllllll882288888ffffff66666ffflllllll49
+94llllll4444444444444444444444444444444444lllllllllllllllllllllllll7777777llllllllllllllllllllll882888888ffffff66666ffflllllll49
+94llllll4444444444444444444444444444444444llllllllllllllllllllll77777d777d777777lllllllllllllllll88888888ffff8444fffffllllllll49
+94llllll55555555555555555555555555555555llllllllllllllllllllllll777d7777d777d77lllllllllllffllllll8888822888884444llllllllllll49
+94llllll55555555555555555555555555555555llllllllllllllllllllllll7777777d7777d77lllllllllllllllllll22222288888844llllllllllllll49
+94llllll5l5l5l5l5l5l5l5l5l5l5l5l5l5l5l5lllllllllllllllllllllllllll7777d7777d777llllllllllllllllllll222288888888lllllllllllllll49
+94lllllll5l5l5l5l5l5l5l5l5l5l5l5l5l5l5l5llllllllllllllllllllllllllll777777d777llllllllllllfllllllll222l8l8l8l8llllllllllllllll49
+94llllllll5lll5lll5lll5lll5lll5lll5lll5lllllllllllllllllllllllllllllll7777777lllllllllllllllllllllll8l8l8l8l8l8lllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllll99999llll9l9l9lllll99ll999ll99l9l9llllllllllllllllll99999llll9ll99lllll999l99ll999l999l999l999ll99l999llllllllll49
+94lllllllllll9949499ll94l9l9lllll949l949l944l9l9lllllllllllllllll9944499ll94l944lllll494l949l494l944l949l949l944l494llllllllll49
+94lllllllllll9994999ll9ll494lllll9l9l999l999l999lllllllllllllllll99l9l99ll9ll9llllllll9ll9l9ll9ll99ll994l999l9llll9lllllllllll49
+94lllllllllll9949499ll9ll949lllll9l9l949l449l949lllllllllllllllll99l4l99ll9ll9llllllll9ll9l9ll9ll94ll949l949l9llll9lllllllllll49
+94lllllllllll4999994l94ll9l9lllll999l9l9l994l9l9lllllllllllllllll4999994l94ll499lllll999l9l9ll9ll999l9l9l9l9l499ll9lllllllllll49
+94llllllllllll44444ll4lll4l4lllll444l4l4l44ll4l4llllllllllllllllll44444ll4llll44lllll444l4l4ll4ll444l4l4l4l4ll44ll4lllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+94llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll49
+999999aa9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999aa999999
+99444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444499
+a445555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555544a
+94555555555555555555555555555555655565656655656566655555665566656665666555556665666555556665656555555555555555555555555555555549
+94555555555555555555555555555555655565656d656565666555556d656d656d656dd555556dd56dd555556d65656555555555555555555555555555555549
+9455555555555555555555555555555565556565656565656d6555556565666566d56655555566656665555566d5666555555555555555555555555555555549
+9455555555555555555555555555555565556565656565656565555565656d656d656d555555dd65dd6555556d65dd6555555555555555555555555555555549
+945555555555555555555555555555556665d6656665d66565655555666565656565666555556665666555556665666555555555555555555555555555555549
+94555555555555555555555555555555ddd55dd5ddd55dd5d5d55555ddd5d5d5d5d5ddd55555ddd5ddd55555ddd5ddd555555555555555555555555555555549
+94555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555549
+94555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555549
+94555555555555555555555555665666566656665665566656565566566656655666565655555665555556565666565656565665555555555555555555555549
+94555555555555555555555556dd56d656dd56dd56d656d6565656d656dd56d65d6d565655555665555556565d6d5656565656d6555555555555555555555549
+945555555555555555555555566656665665566556565666566656565665565655655d6d55555d665555566d5565565656565656555555555555555555555549
+9455555555555555555555555dd656dd56d556d5565656dd56d6565656d55656556556d6555556d6555556d65565565656565656555555555555555555555549
+945555555555555555555555566d565556665666566656555656566d5666565656665656555556665555565656665d665d665656555555555555555555555549
+9455555555555555555555555dd55d555ddd5ddd5ddd5d555d5d5dd55ddd5d5d5ddd5d5d55555ddd55555d5d5ddd55dd55dd5d5d555555555555555555555549
+94455555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555549
+99444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444499
+99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999
+
 __gff__
 0000000000000000030303000000151500030303030303030300000000080808000303030303030303030303080000000000000000000000000000000000000001050000000101000001010111111111010500000001010000010101111111110101010000000001010100000101010100000000000000010001000001010101
-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003030303000000000000000000000000030303030000000000000000000000000303030300000000000000000000000003030303000000000000
+0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001515000000000000000000000003030303000000000000000000000000030303030000000000000000000000000303030300000000000000000000000003030303000000000000
 __map__
-494a4a4a4a4a4a4a4a4a4a4a4a4a4a4b6a6b0000000000000000000000000010494a4a4a4a4a4a4a4a4a4a4a4a4a4a4b000000000000000000000000000000000000000000000000000000000000000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b800000000000000000000000000000000000000000000000000000000000000
-595a5a5a5a5a5a5a5a5a5a5a5a5a5a5b7a7b000000000000000000000000001079000000868788898a8b0000000000690000494a4a4a4a4a4a4a4a4a4a4b00000000494a4a4a4a4a4a4a4a4a4a4b000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b800000000000000000000000000000000000000000000000000000000000000
-4d4e5c5c4e4e4c4e4e4e4e4c4e5c4e4f1010101000001000101010100000101079000000969798999a9b000000000069000079000000000000000000006900000000790000000000000000000069000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b800000000000000000000000000000000000000000000000000000000000000
-5d00505100405050410056000041005f10003600000000360000000000000010790000000000a7a8a9aaab0000000069000079000000000000000000006900000000790000000000000000000069000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b800000000000000000000000000000000000000000000000000000000000000
-5d002500005000e6500000001150005f1000424300350000000000000037001079000000000000000000000000000069000079000000000000000000006900000000790000c0c1c2c300c4c50069000000b8b8b84d4e4c4e4e4e4e4c4e4fb8b8b800000000000000000000000000000000000000000000000000000000000000
-6d00000000520000520000000052006f1000000000000000000000000000001079000000000000000000000083840069000079000000000000000000006900000000790000d0d1d2d300d4d50069000000b8b8b85d00000000000000006fb8b8b800000000000000000000000000000000000000000000000000000000000000
-5d00004150504100000050500000005f1000000000360000000000360000001079808182838400000000000093940069000079000000000000000000006900000000790000e0e1e2e30000000069000000b8b8b86d00504000006000005fb8b8b80000000000362c000000000000000000000000000000000000000000000000
-5d00114042f65000000042250060005f10000037000000000000004300000010799091929394838400b6b78c8d8e8f690000790000000000000000000069000000007900f4f0f1f2f3f400000069000000b8b8b85d00255000005020005fb8b8b800000000000054000000000000000000000000000000000000000000000000
-5d00004000005200000000000040205f1000000000000000000000000000001079a0a1a2a3a493940000009c9d9e9f69000079000000636460000000006900000000790000000000000000000069000000b8b8b85d00005200005200005fb8b8b800000000000000000000000000000000000000000000000000000000000000
-6d000040150000004d4e4e4e4e4e4e4f1000000035000000000000000000001079b0b1b2b3b40000000000acadaeaf69000079000000737450000000006900000000790000000000000000000069000000b8b8b85d00000000410000005fb8b8b800000000000000000000000000000000000000000000000000000000000000
-5d000051000041005d40c6000000215f100000000000000000350000000000107985858585a50000b6b700bcbdbebf69000079000000000052002c00006900000000790000000000000000000069000000b8b8b85d00000011500000005fb8b8b800000000000000003700000000000000000000000000000000000000000000
-5d000052001150005d5150500051505f10000000000000000000002c0000381079000000000000000000000000000069000079000000000000000000006900000000790000000000000000000069000000b8b8b85d56000000520000005fb8b8b800000000000000004500000000000000000000000000000000000000000000
-5d00e640000000005d4243430042435f1000003700000000000000000000001079000000000000000000000000000069000079000000000000000000006900000000790000000000000000000069000000b8b8b87d7e7e7e7e7e7e7e7e7fb8b8b800000000000000000000000000000000000000000000000000000000000000
-5d000051505000005e0000000000d65f10000000003800000000000000000010677777777777777777777777777777680000595a5a5a5a5a5a5a5a5a5a5b00000000595a5a5a5a5a5a5a5a5a5a5b000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b800000000000000000000000000000000000000000000000000000000000000
-5d55004242430000000000560051505f1000000000000000000000000000381079000000000000000000000000000069000000000000000000000000000000000000000000000000000000000000000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b800000000000000000000000000000000000000000000000000000000000000
-7d7e7e7e7e7e7e7e7e7e7e7e7e7e7e7f10101010101010101010101010424310595a5a5a5a5a5a5a5a5a5a5a5a5a5a5b000000000000000000000000000000000000000000000000000000000000000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b800000000000000000000000000000000000000000000000000000000000000
+494a4a4a4a4a4a4a4a4a4a4a4a4a4a4b6a6b0000000000000000000000000010494a4a4a4a4a4a4a4a4a4a4a4a4a4a4b0000000000000000000000000000000000000000000000000000000000000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b80000000000000000000000000000000000000000000000000000000000000000
+595a5a5a5a5a5a5a5a5a5a5a5a5a5a5b7a7b000000000000000000000000001079000000868788898a8b0000000000690000494a4a4a4a4a4a4a4a4a4a4b00000000494a4a4a4a4a4a4a4a4a4a4b0000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b80000000000000000000000000000000000000000000000000000000000000000
+4d4e5c5c4e4e4c4e4e4e4e4c4e5c4e4f1010101000001000101010100000101079000000969798999a9b0000000000690000790000000000000000000069000000007900000000000000000000690000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b80000000000000000000000000000000000000000000000000000000000000000
+5d00505100405050410056000041005f10003600000000360000000000000010790000000000a7a8a9aaab00000000690000790000000000000000000069000000007900000000000000000000690000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b80000000000000000000000000000000000000000000000000000000000000000
+5d002500005000e6500000001150005f1000424300350000000000000037001079000000000000000000000000000069000079000000000000000000006900000000790000c0c1c2c300c4c500690000b8b8b84d4e4c4e4e4e4e4c4e4fb8b8b80000000000000000000000000000000000000000000000000000000000000000
+6d00000000520000520000000052006f1000000000000000000000000000001079000000000000000000000083840069000079000000000000000000006900000000790000d0d1d2d300d4d500690000b8b8b85d00000000000000006fb8b8b80000000000000000000000000000000000000000000000000000000000000000
+5d00004150504100000050500000005f1000000000360000000000360000001079808182838400000000000093940069000079000000000000000000006900000000790000e0e1e2e300000000690000b8b8b86d00504000006000005fb8b8b80000000000362c00000000000000000000000000000000000000000000000000
+5d00114042f65000000042250060005f10000037000000000000004300000010799091929394838400b6b78c8d8e8f690000790000000000000000000069000000007900f4f0f1f2f3f4000000690000b8b8b85d00255000005020005fb8b8b80000000000005400000000000000000000000000000000000000000000000000
+5d00004000005200000000000040205f1000000000000000000000000000001079a0a1a2a3a493940000009c9d9e9f690000790000006364600000000069000000007900000000000000000000690000b8b8b85d00005200005200005fb8b8b80000000000000000000000000000000000000000000000000000000000000000
+6d000040150000004d4e4e4e4e4e4e4f1000000035000000000000000000001079b0b1b2b3b40000000000acadaeaf690000790000007374500000000069000000007900000000000000000000690000b8b8b85d00000000410000005fb8b8b80000000000000000000000000000000000000000000000000000000000000000
+5d000051000041005d40c6000000215f100000000000000000350000000000107985858585a50000b6b700bcbdbebf69000079000000000052002c000069000000007900000000000000000000690000b8b8b85d00000011500000005fb8b8b80000000000000000370000000000000000000000000000000000000000000000
+5d000052001150005d5150500051505f10000000000000000000002c00003810790000000000000000000000000000690000790000000000000000000069000000007900000000000000000000690000b8b8b85d56000000520000005fb8b8b80000000000000000450000000000000000000000000000000000000000000000
+5d00e640000000005d4243430042435f10000037000000000000000000000010790000000000000000000000000000690000790000000000000000000069000000007900000000000000000000690000b8b8b87d7e7e7e7e7e7e7e7e7fb8b8b80000000000000000000000000000000000000000000000000000000000000000
+5d000051505000005e0000000000d65f10000000003800000000000000000010677777777777777777777777777777680000595a5a5a5a5a5a5a5a5a5a5b00000000595a5a5a5a5a5a5a5a5a5a5b0000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b80000000000000000000000000000000000000000000000000000000000000000
+5d55004242430000000000560051505f10000000000000000000000000003810790000000000000000000000000000690000000000000000000000000000000000000000000000000000000000000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b80000000000000000000000000000000000000000000000000000000000000000
+7d7e7e7e7e7e7e7e7e7e7e7e7e7e7e7f10101010101010101010101010424310595a5a5a5a5a5a5a5a5a5a5a5a5a5a5b0000000000000000000000000000000000000000000000000000000000000000b8b8b8b8b8b8b8b8b8b8b8b8b8b8b8b80000000000000000000000000000000000000000000000000000000000000000
 __sfx__
 960100001402011020110200000000000000000000000000000000000000000000000000000000000001f70000000000000000000000000000000000000000000000000000000000000000000000000000000000
 480100000fa300fa3014a301aa4000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
