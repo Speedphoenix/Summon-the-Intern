@@ -1,9 +1,249 @@
 pico-8 cartridge // http://www.pico-8.com
 version 42
 __lua__
-cls()
-map(0, 0)
-map(16, 0)
+function _init()
+
+	mode = "start"
+	sqrt_inv_2 = 1 / sqrt(2)
+
+		player = {
+		sp = 1,
+		x = 10,
+		y = 10,
+		h = 8,
+		w = 8,
+		dx = 0,
+		dy = 0,
+		acc = 1,
+		fric = .15,
+		max_d = 1,
+		spd = 2,
+		flipx = false
+		}
+		
+		
+end
+
+
+
+function _update()
+
+	if mode =="game" then update_game()
+	elseif mode == "start" then update_start()
+	elseif mode == "end" then update_end() end
+
+end
+
+
+
+function _draw()
+
+	if mode =="game" then draw_game()
+	elseif mode == "start" then draw_start()
+	elseif mode == "end" then draw_end() end
+
+	print(mode)
+	print(player.flipx)
+
+end
+-->8
+--  custom function
+
+function update_player()
+	ldx = 0
+	ldy = 0
+	
+	local lx=player.x
+	local ly=player.y
+	
+
+	if btn(⬅️) then ldx -= 1 player.flipx = true end
+	if btn(➡️) then ldx += 1 player.flipx = false end
+	if btn(⬆️) then ldy -= 1 end
+	if btn(⬇️) then ldy += 1 end 		
+
+	if ldx == 0 then
+		player.dx *= player.fric
+ end
+	if ldy == 0 then
+		player.dy *= player.fric
+	end
+	
+	if ldx != 0 and ldy != 0 then
+		ldx *= sqrt_inv_2
+		ldy *= sqrt_inv_2
+	end
+	
+	
+	player.dx += ldx * player.acc
+	player.dy += ldy * player.acc
+		
+	-- if btn(⬅️) then player.dx -= player.acc end
+	-- if btn(➡️) then player.dx += player.acc end
+	-- if btn(⬆️) then player.dy -= player.acc end
+	-- if btn(⬇️) then player.dy += player.acc end 		
+ 
+ if abs(player.dx) > player.max_d then
+ 	if player.dx > 0 then
+  	player.dx = player.max_d
+  else
+   player.dx = player.max_d*-1
+ 	end
+ end
+ 
+ if abs(player.dy) > player.max_d then
+ 	if player.dy > 0 then
+  	player.dy = player.max_d
+  else
+   player.dy = player.max_d*-1
+ 	end
+ end
+ 
+ player.x += player.dx
+ player.y += player.dy
+ 
+     --check collision
+    if player.dx>0 then
+
+        if collide_map(player,"right", 0) then
+            player.dx=0
+            player.x=lx
+        end
+    end
+        
+    if player.dx<0 then
+        if collide_map(player,"left",0) then
+            player.dx=0
+            player.x=lx  
+        end
+    end
+    
+    if player.dy<0 then
+        if collide_map(player,"up",0) then
+            player.dy=0
+            player.y=ly
+        end
+    end
+    
+    if player.dy>0 then
+        if collide_map(player,"down",0) then
+            player.dy=0
+            player.y=ly
+        end
+    end      
+
+end
+
+function collide_map(obj,aim,flag)
+
+    local x1=0
+    local y1=0
+    local x2=0
+    local y2=0
+
+    local x=obj.x local y=obj.y local w=obj.w local h=obj.h
+
+    if aim=="left" then
+        x1=x+1   y1=y+2
+        x2=x+2    y2=y+h-3
+    elseif aim=="right" then
+        x1=x+w-2   y1=y+2
+        x2=x+w-1  y2=y+h-3
+    elseif aim=="up" then
+        x1=x+5    y1=y-1
+        x2=x+w-5  y2=y
+    elseif aim=="down" then
+        x1=x+3      y1=y+h-1
+        x2=x+w-4    y2=y+h+obj.dy/4
+    end
+
+    --pixel to tiles
+    x1=x1/8  x2/=8  y1/=8  y2/=8
+
+    local a= fget(mget(x1,y1), flag) 
+    local b= fget(mget(x1,y2), flag) 
+    local c= fget(mget(x2,y1), flag) 
+    local d= fget(mget(x2,y2), flag)
+
+    if a or b or c or d then
+        is_collide=true
+        return true
+    else
+        is_collide=false
+        return false
+    end
+
+
+end
+
+function startgame()
+
+	 		player.x = 10
+			 player.y = 10
+
+end
+
+
+
+-->8
+-- update start
+
+function update_start()
+
+
+
+ if btnp(❎) or btnp(🅾️) then 
+  startgame()  
+  mode="game"
+ end
+ 
+end
+-->8
+-- update game
+
+function update_game()
+
+
+
+ if btnp(❎) and btnp(🅾️)
+ then mode="end" end
+ 
+ update_player()
+ 
+end
+-->8
+-- update end
+
+function update_end()
+
+ if btnp(❎) or btnp(🅾️)
+ then mode="start" end
+ 
+end
+-->8
+-- draw start
+
+function draw_start()
+
+	cls(3)
+
+end
+-->8
+-- draw game
+
+function draw_game()
+
+	cls(13)
+	map(0,0)
+	spr(player.sp,player.x,player.y,1,1,player.flipx)
+end
+-->8
+-- draw end
+
+function draw_end()
+	cls(8)
+
+end
 __gfx__
 00000000000999900009999000099990000000000000000000000000000000000000077700000000000000000000000000000000000000000000000000000000
 000000000009fc000009fc000009fc00000999900009999000000000000000000000077700000000000000000000000000000000000000000000000000000000
