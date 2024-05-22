@@ -15,11 +15,20 @@ function _init()
 		dx = 0,
 		dy = 0,
 		acc = 1,
-		fric = .15,
-		max_d = 1,
+		fric = .1,
+		max_d = 1.5,
 		spd = 2,
-		flipx = false
+		flipx = false,
+		running = false,
 		}
+		
+		
+		-- variables anim
+		anim_play=0
+  anim_spd=2
+  fstart=1
+  fend=4
+		player_frames={1,3,4,2,3,4,5} --idle 1,2,3 run : 1,2,3,4,5 
 		
 		
 end
@@ -44,8 +53,11 @@ function _draw()
 
 	print(mode)
 	print(player.flipx)
+	print(player.running)
 
 end
+
+
 -->8
 --  custom function
 
@@ -55,7 +67,6 @@ function update_player()
 	
 	local lx=player.x
 	local ly=player.y
-	
 
 	if btn(⬅️) then ldx -= 1 player.flipx = true end
 	if btn(➡️) then ldx += 1 player.flipx = false end
@@ -73,6 +84,14 @@ function update_player()
 		ldx *= sqrt_inv_2
 		ldy *= sqrt_inv_2
 	end
+
+	if ldx != 0 or ldy != 0 then
+		print("running")
+	 player.running = true
+	else
+		print("not running")
+	 player.running = false
+ end
 	
 	
 	player.dx += ldx * player.acc
@@ -184,7 +203,33 @@ function startgame()
 end
 
 
+function anim_player(obj)
 
+     -- animation player
+ anim_play-=1
+ 
+ if anim_play<=0 then --si anim_play atteint 0, reset compteur a rebour a anim_spd   
+  anim_play=anim_spd
+  obj.sp+=1
+ end
+ 
+ if obj.sp>fend then
+  obj.sp=fstart
+ end
+ 
+ if obj.sp<fstart then 
+  obj.sp=fstart
+ end
+
+
+  --anim tree 1-2-3 idle, 4,5,6,7,8
+
+ if obj.running then
+  fstart=4 fend=7 anim_spd=3
+ else fstart=1 fend=3 anim_spd=6
+ end
+
+end
 -->8
 -- update start
 
@@ -209,6 +254,7 @@ function update_game()
  then mode="end" end
  
  update_player()
+ anim_player(player)
  
 end
 -->8
@@ -236,7 +282,7 @@ function draw_game()
 	cls(13)
 	map(0,0)
 	map(16,0)
-	spr(player.sp,player.x,player.y,1,1,player.flipx)
+	spr(player_frames[player.sp],player.x,player.y,1,1,player.flipx)
 end
 -->8
 -- draw end
